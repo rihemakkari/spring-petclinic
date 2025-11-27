@@ -33,7 +33,7 @@ pipeline {
 
         stage('OWASP Dependency-Check') {
             steps {
-                withCredentials([string(credentialsId: 'nvd-api-key	', variable: 'NVD_API_KEY')]) {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                     dependencyCheck(
                         odcInstallation: 'owasp-dependency',
                         additionalArguments: '--suppression suppression.xml --enableRetired --format HTML --format XML --scan . --nvdApiKey ${NVD_API_KEY}',
