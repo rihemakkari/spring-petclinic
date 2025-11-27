@@ -4,27 +4,26 @@ pipeline {
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['dev', 'prod'], description: 'Target environment')
     }
-    
+
     tools {
         jdk 'JAVA_HOME'
-	maven 'M2_HOME'
+        maven 'M2_HOME'
     }
-    
+
     environment {
-        DOCKER_IMAGE = "taibmh/spring-petclinic:${BUILD_NUMBER}"
+        DOCKER_IMAGE = "rihemakkari/spring-petclinic:${BUILD_NUMBER}"
         DOCKER_REGISTRY = "docker.io"
-        K8S_NAMESPACE = "${params.ENVIRONMENT}"
     }
-    
+
     stages {
         stage('Checkout') {
             steps {
                 git branch: 'main',
                     url: 'https://github.com/rihemakkari/spring-petclinic.git',
-                    credentialsId: 'f72b2e8b-21eb-4853-b050-32fd26cbb0d5'
+                    credentialsId: 'github-creds-id'
             }
         }
-        
+
         stage('Build') {
             steps {
                 sh 'rm -rf .scannerwork'
@@ -34,7 +33,7 @@ pipeline {
 
         stage('OWASP Dependency-Check') {
             steps {
-                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+                withCredentials([string(credentialsId: 'owasp-nvd-key', variable: 'NVD_API_KEY')]) {
                     dependencyCheck(
                         odcInstallation: 'owasp-dependency',
                         additionalArguments: '--suppression suppression.xml --enableRetired --format HTML --format XML --scan . --nvdApiKey ${NVD_API_KEY}',
@@ -62,7 +61,6 @@ pipeline {
             }
         }
 
-        
         stage('Test') {
             steps {
                 sh './mvnw test -Dtest=!PostgresIntegrationTests'
@@ -78,7 +76,7 @@ pipeline {
             steps {
                 script {
                     def scannerHome = tool 'SonarScanner'
-                    withSonarQubeEnv('SonarQube') {
+                    withSonarQubeEnv('sq1') {
                         sh """
                             ${scannerHome}/bin/sonar-scanner \
                             -Dsonar.projectKey=spring-petclinic \
@@ -89,13 +87,13 @@ pipeline {
                             -Dsonar.java.test.binaries=target/test-classes \
                             -Dsonar.junit.reportPaths=target/surefire-reports \
                             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-                            -Dsonar.java.source=17
+                            -Dsonar.java.source=25
                         """
                     }
                 }
             }
         }
-        
+
         stage('Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -104,71 +102,38 @@ pipeline {
                 sh 'rm -rf .scannerwork'
             }
         }
-        
+
         stage('Package') {
             steps {
                 sh './mvnw package -DskipTests'
             }
         }
-        
+
         stage('Build Docker Image') {
             steps {
                 sh 'docker build -t ${DOCKER_IMAGE} .'
             }
         }
-        
+
         stage('Push to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh '''
                         echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                        docker tag ${DOCKER_IMAGE} taibmh/spring-petclinic:latest
                         docker push ${DOCKER_IMAGE}
-                        docker push taibmh/spring-petclinic:latest
                         docker logout
                     '''
                 }
             }
         }
-        
-        stage('Trivy Security Scan') {
-            steps {
-                sh '''
-                    trivy image --severity HIGH,CRITICAL --format json --output trivy-report.json ${DOCKER_IMAGE}
-                    trivy image --severity HIGH,CRITICAL --format table ${DOCKER_IMAGE}
-                '''
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-report.json', fingerprint: true
-                }
-            }
-        }
 
-                    
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh '''
-                    kubectl apply -f k8s/${K8S_NAMESPACE}/ -n ${K8S_NAMESPACE}
-                    kubectl delete replicaset --all -n ${K8S_NAMESPACE} || true
-                    kubectl delete pod --field-selector=status.phase==Pending -n ${K8S_NAMESPACE} || true
-                    sleep 10
-                    sed -i "s|image: taibmh/spring-petclinic:.*|image: ${DOCKER_IMAGE}|g" k8s/${K8S_NAMESPACE}/petclinic.yml
-                    kubectl apply -f k8s/${K8S_NAMESPACE}/petclinic.yml -n ${K8S_NAMESPACE}
-                    kubectl rollout status deployment/petclinic -n ${K8S_NAMESPACE} --timeout=180s
-                    kubectl get pods -l app=petclinic -n ${K8S_NAMESPACE}
-                    kubectl get svc petclinic -n ${K8S_NAMESPACE}
-                '''
-            }
-        }
-        
         stage('Archive') {
             steps {
                 archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true
             }
         }
     }
-    
+
     post {
         success {
             echo 'Full CI/CD pipeline completed!'
