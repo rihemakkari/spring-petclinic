@@ -126,6 +126,19 @@ pipeline {
                 }
             }
         }
+        stage('Trivy Scan') {
+          steps {
+        sh '''
+            trivy image --format json --output trivy-report.json ${DOCKER_IMAGE}
+            trivy image --severity HIGH,CRITICAL ${DOCKER_IMAGE}
+        '''
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+        }
+    }
+}
 
         stage('Archive') {
             steps {
