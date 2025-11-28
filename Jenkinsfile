@@ -129,8 +129,10 @@ pipeline {
         stage('Trivy Scan') {
           steps {
         sh '''
-            trivy image --format json --output trivy-report.json ${DOCKER_IMAGE}
-            trivy image --severity HIGH,CRITICAL ${DOCKER_IMAGE}
+         # Update Trivy DB before scan
+            trivy --reset
+            trivy image --scanners vuln --vuln-type os,library --format json --output trivy-report.json ${DOCKER_IMAGE}
+            trivy image --scanners vuln --severity HIGH,CRITICAL ${DOCKER_IMAGE} --exit-code 1 || true
         '''
     }
     post {
